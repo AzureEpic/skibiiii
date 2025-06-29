@@ -10,7 +10,7 @@ const fetch = require('node-fetch'); // For making HTTP requests to Roblox API
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 const ROBLOX_CATALOG_API_URL = 'https://catalog.roblox.com/v1/search/items?category=All&creatorName=Roblox&sortType=RecentlyCreated&limit=10'; // Placeholder URL for recently created items
-const CHECK_INTERVAL_MS = 60 * 60 * 1000; // Check every 1 hour (60 minutes * 60 seconds * 1000 milliseconds)
+const CHECK_INTERVAL_MS = 1 * 1 * 1000; // Check every 1 hour (60 minutes * 60 seconds * 1000 milliseconds)
 
 // --- Global State ---
 // This will store the IDs of the bundles we've already seen to avoid re-notifying.

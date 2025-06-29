@@ -9,7 +9,7 @@ const fetch = require('node-fetch'); // For making HTTP requests to Roblox API
 // environment variable settings (e.g., Replit Secrets, Railway Variables).
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
-const ROBLOX_CATALOG_API_URL = 'https://catalog.roblox.com/v1/search/items?category=All&creatorName=Roblox&sortType=RecentlyCreated&limit=20'; // Placeholder URL for recently created items
+const ROBLOX_CATALOG_API_URL = 'https://catalog.roblox.com/v1/bundles/list'; // Placeholder URL for recently created items
 const CHECK_INTERVAL_MS = 1 * 60 * 1000; //Check every minute
 
 // --- Global State ---
@@ -59,7 +59,16 @@ async function sendMessage(message) {
 async function checkForNewBundles() {
     console.log('Checking for new Roblox bundles...');
     try {
-        const response = await fetch(ROBLOX_CATALOG_API_URL);
+       const response = await fetch('https://catalog.roblox.com/v1/bundles/list', {
+    method: 'POST',
+    headers: {
+        'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+        sortOrder: 'Desc',
+        limit: 20
+    })
+});
         if (!response.ok) {
             throw new Error(`HTTP error! Status: ${response.status}`);
         }
@@ -93,7 +102,7 @@ async function checkForNewBundles() {
                                 `**Name:** ${bundle.name || 'N/A'}\n` +
                                 `**Description:** ${bundle.description || 'No description provided.'}\n` +
                                 `**Price:** ${bundle.price || 'Free'}\n` +
-                                `**Link:** https://www.roblox.com/catalog/${bundle.id}/-`; // Constructing a generic catalog link
+                                `**Link:** https://www.roblox.com/bundles/${bundle.id}/-`; // Constructing a generic catalog link
                 await sendMessage(message);
             }
         } else {

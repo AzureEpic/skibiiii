@@ -1,117 +1,140 @@
 // Import necessary modules
-const { Client, GatewayIntentBits } = require('discord.js');
-const fetch = require('node-fetch'); // For making HTTP requests to Roblox API
+const { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder, Routes } = require('discord.js');
+const { REST } = require('@discordjs/rest');
+const fetch = require('node-fetch');
 
 // --- Configuration ---
-// IMPORTANT: These values are now read from environment variables for security.
-// You will set DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID in your hosting platform's
-// environment variable settings (e.g., Replit Secrets, Railway Variables).
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
+const CLIENT_ID = process.env.DISCORD_CLIENT_ID; // <-- IMPORTANT: Add your Bot's Client ID as an environment variable
 
-// Updated Roblox Catalog API URL for recently published bundles
-// This URL uses the search/items endpoint with specific filters and sorting.
-// - category=Characters: Bundles are typically classified under Characters.
-// - subcategory=Bundles: Narrows down the search to bundles.
-// - sortType=3: This parameter generally indicates sorting by 'Updated' or 'Recently Created/Published'.
-// - sortOrder=Desc: Ensures the newest items appear first.
-// - limit=10: Fetches 10 items per request.
+// Roblox API URLs
 const ROBLOX_CATALOG_API_URL = 'https://catalog.roblox.com/v1/search/items?category=Characters&subcategory=Bundles&sortType=3&sortOrder=Desc&limit=10';
-const CHECK_INTERVAL_MS = 1 * 60 * 1000; // Check every minute (1 minute = 60,000 milliseconds)
+const ROBLOX_ITEM_DETAILS_API_URL = 'https://catalog.roblox.com/v1/items/details';
+const ROBLOX_THUMBNAILS_API_URL = 'https://thumbnails.roblox.com/v1/bundles/thumbnails';
+const CHECK_INTERVAL_MS = 1 * 60 * 1000; // 1 minute
 
 // --- Global State ---
-// This will store the IDs of the bundles we've already seen to avoid re-notifying.
-// In a production environment, this should be persisted (e.g., in a database or a file)
-// so that the bot remembers seen bundles even if it restarts.
 let lastKnownBundleIds = new Set();
 
 // --- Discord Bot Client Initialization ---
 const client = new Client({
     intents: [
-        GatewayIntentBits.Guilds,           // Required for accessing guild (server) information
-        GatewayIntentBits.GuildMessages,    // Required for sending and receiving messages
-        GatewayIntentBits.MessageContent    // Required for accessing message content (if needed, though not directly for this bot)
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
     ]
 });
 
-// --- Helper Function: Send Message to Discord Channel ---
-/**
- * Sends a message to the configured Discord channel.
- * @param {string} message The message content to send.
- */
-async function sendMessage(message) {
-    // Ensure both token and channel ID are loaded before attempting to send.
-    if (!DISCORD_BOT_TOKEN || !DISCORD_CHANNEL_ID) {
-        console.error('Error: Discord Bot Token or Channel ID are not set. Cannot send message.');
-        return;
-    }
+// --- Helper Function: Slugify Name for URL ---
+function slugify(name) {
+    if (!name) return '';
+    return name.toString().toLowerCase()
+        .replace(/\s+/g, '-')
+        .replace(/[^\w-]+/g, '')
+        .replace(/--+/g, '-')
+        .replace(/^-+/, '')
+        .replace(/-+$/, '');
+}
 
+/**
+ * Fetches bundle details, creates an embed, and sends it.
+ * Can be used by both automatic checks and slash commands.
+ * @param {string|number} bundleId The ID of the bundle to post.
+ * @param {import('discord.js').Interaction|null} interaction The interaction object if triggered by a command.
+ */
+async function createAndSendBundleEmbed(bundleId, interaction = null) {
     try {
-        const channel = await client.channels.fetch(DISCORD_CHANNEL_ID);
-        if (channel) {
-            await channel.send(message);
-            console.log(`Message sent to Discord channel ${DISCORD_CHANNEL_ID}: "${message}"`);
-        } else {
-            console.error(`Error: Could not find Discord channel with ID ${DISCORD_CHANNEL_ID}.`);
+        // Step 1: Fetch bundle details from Roblox API
+        const detailsResponse = await fetch(ROBLOX_ITEM_DETAILS_API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({ items: [{ itemType: 'Bundle', id: parseInt(bundleId) }] })
+        });
+
+        if (!detailsResponse.ok) throw new Error(`Item Details API returned status ${detailsResponse.status}`);
+        
+        const detailsData = await detailsResponse.json();
+        const bundle = detailsData.data?.[0];
+
+        if (!bundle) {
+            const errorMessage = `Could not find a bundle with ID \`${bundleId}\`. It might be invalid or off-sale.`;
+            if (interaction) await interaction.editReply({ content: errorMessage, ephemeral: true });
+            else console.error(errorMessage);
+            return;
         }
+
+        // Step 2: Fetch bundle thumbnail
+        const thumbnailResponse = await fetch(`${ROBLOX_THUMBNAILS_API_URL}?bundleIds=${bundleId}&size=420x420&format=Png`);
+        const thumbnailData = await thumbnailResponse.json();
+        const thumbnailUrl = thumbnailData.data?.[0]?.imageUrl || '';
+
+        // Step 3: Construct the Embed
+        const bundleSlug = slugify(bundle.name);
+        const bundleLink = `https://www.roblox.com/bundles/${bundle.id}/${bundleSlug || '-'}`;
+
+        let priceString = 'N/A';
+        if (bundle.priceStatus === 'Free') {
+            priceString = 'Free';
+        } else if (bundle.price) {
+            priceString = `${bundle.price} Robux`;
+        } else if (bundle.priceStatus === "Off-Sale") {
+            priceString = 'Off-Sale';
+        }
+
+        const embed = new EmbedBuilder()
+            .setColor('#0099ff')
+            .setTitle(bundle.name || 'Unknown Bundle')
+            .setURL(bundleLink)
+            .setDescription(bundle.description || 'No description available.')
+            .setThumbnail(thumbnailUrl)
+            .addFields(
+                { name: 'Price', value: priceString, inline: true },
+                { name: 'Creator', value: `[${bundle.creatorName}](${bundle.creatorProfileLink})` || 'N/A', inline: true }
+            )
+            .setTimestamp(new Date(bundle.updated))
+            .setFooter({ text: 'Bundle Notifier', iconURL: 'https://i.imgur.com/s4p4b9c.png' });
+
+        // Step 4: Send the embed
+        if (interaction) {
+            await interaction.editReply({ embeds: [embed] });
+        } else {
+            const channel = await client.channels.fetch(DISCORD_CHANNEL_ID);
+            if (channel) await channel.send({ embeds: [embed] });
+        }
+
     } catch (error) {
-        console.error(`Failed to send message to Discord:`, error);
+        console.error(`Failed to create embed for bundle ${bundleId}:`, error);
+        if (interaction) {
+            await interaction.editReply({ content: `🚨 An error occurred while fetching bundle \`${bundleId}\`: ${error.message}`, ephemeral: true });
+        }
     }
 }
 
+
 // --- Function to Check for New Roblox Bundles ---
-/**
- * Fetches recent bundles from the Roblox API and identifies new ones.
- */
 async function checkForNewBundles() {
     console.log('Checking for new Roblox bundles...');
     try {
-        // Use the updated URL for GET request
-        const response = await fetch(ROBLOX_CATALOG_API_URL, {
-            method: 'GET', // Changed to GET method
-            headers: {
-                'Accept': 'application/json' // Indicate preference for JSON response
-            }
-            // No 'body' is needed for GET requests
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! Status: ${response.status}`);
-        }
+        const response = await fetch(ROBLOX_CATALOG_API_URL);
+        if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
         const data = await response.json();
-
-        // Assuming the API returns an array of items under a 'data' key
         const currentBundles = data.data || [];
 
-        // If this is the first check, populate lastKnownBundleIds without notifying
         if (lastKnownBundleIds.size === 0 && currentBundles.length > 0) {
             currentBundles.forEach(bundle => lastKnownBundleIds.add(bundle.id));
-            console.log(`Initial scan complete. Found ${lastKnownBundleIds.size} bundles. No notifications sent.`);
-            return; // Exit after initial population
+            console.log(`Initial scan complete. Found ${lastKnownBundleIds.size} bundles. Monitoring for new ones.`);
+            return;
         }
 
-        const newBundles = [];
-        currentBundles.forEach(bundle => {
-            // Check if the bundle ID is new
-            if (!lastKnownBundleIds.has(bundle.id)) {
-                newBundles.push(bundle);
-                lastKnownBundleIds.add(bundle.id); // Add to our known list
-            }
-        });
+        const newBundles = currentBundles.filter(bundle => !lastKnownBundleIds.has(bundle.id));
 
         if (newBundles.length > 0) {
             console.log(`Found ${newBundles.length} new bundle(s)!`);
             for (const bundle of newBundles) {
-                // Constructing a generic catalog link. Note: Roblox URLs for bundles sometimes differ slightly
-                // but `/bundles/{id}/-` is a common pattern that redirects to the correct page.
-                const bundleLink = `https://www.roblox.com/bundles/${bundle.id}/-`;
-
-                const message = `New Bundle Released\n` +
-                                `**Name:** ${bundle.name || 'N/A'}\n` +
-                                `**Description:** ${bundle.description || 'No description provided.'}\n` +
-                                `**Price:** ${bundle.price || 'Free'}\n` +
-                                `**Link:** ${bundleLink}`;
-                await sendMessage(message);
+                lastKnownBundleIds.add(bundle.id);
+                // Use the new reusable function to post the embed
+                await createAndSendBundleEmbed(bundle.id);
             }
         } else {
             console.log('No new bundles found.');
@@ -119,44 +142,71 @@ async function checkForNewBundles() {
 
     } catch (error) {
         console.error('Error checking for new Roblox bundles:', error);
-        await sendMessage(`🚨 Alert: Failed to check for new Roblox bundles! Error: \`${error.message}\``);
     }
 }
 
-// --- Discord Bot Event Handling ---
 
+// --- Discord Bot Event Handling ---
 client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
-    console.log(`Bot ID: ${client.user.id}`);
 
-    // Perform an initial check immediately upon bot startup
+    // --- Slash Command Registration ---
+    if (!CLIENT_ID || !DISCORD_BOT_TOKEN) {
+        console.error("FATAL: CLIENT_ID or DISCORD_BOT_TOKEN is missing. Cannot register commands.");
+        return;
+    }
+    const rest = new REST({ version: '10' }).setToken(DISCORD_BOT_TOKEN);
+    const commands = [
+        new SlashCommandBuilder()
+            .setName('debugsend')
+            .setDescription('Fetches and posts a bundle embed by its ID.')
+            .addStringOption(option =>
+                option.setName('id')
+                .setDescription('The Roblox bundle ID to post.')
+                .setRequired(false)) // Optional parameter
+            .toJSON(),
+    ];
+
+    try {
+        console.log('Started refreshing application (/) commands.');
+        await rest.put(
+            Routes.applicationCommands(CLIENT_ID),
+            { body: commands },
+        );
+        console.log('Successfully reloaded application (/) commands.');
+    } catch (error) {
+        console.error('Failed to register commands:', error);
+    }
+    // --- End Command Registration ---
+
+    // Initial check and interval setup
     await checkForNewBundles();
-
-    // Set up the interval to check for new bundles regularly
     setInterval(checkForNewBundles, CHECK_INTERVAL_MS);
-    console.log(`Scheduled to check for new bundles every ${CHECK_INTERVAL_MS / 1000 / 60} minutes.`);
+    console.log(`Scheduled to check for new bundles every ${CHECK_INTERVAL_MS / 60000} minute(s).`);
 });
 
-// Log in to Discord. Ensure token is available.
+
+// --- Listen for Slash Command Interactions ---
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isChatInputCommand()) return;
+
+    const { commandName } = interaction;
+
+    if (commandName === 'debugsend') {
+        // Get the 'id' option, or default to '126' if not provided
+        const bundleId = interaction.options.getString('id') ?? '126';
+        
+        // Let Discord know we've received the command and are working on it
+        await interaction.deferReply();
+
+        // Use the refactored function to handle the logic
+        await createAndSendBundleEmbed(bundleId, interaction);
+    }
+});
+
+// Log in to Discord
 if (DISCORD_BOT_TOKEN) {
     client.login(DISCORD_BOT_TOKEN);
 } else {
-    console.error('DISCORD_BOT_TOKEN is not set. Please set it as an environment variable.');
+    console.error('FATAL: DISCORD_BOT_TOKEN is not set. Please set it as an environment variable.');
 }
-
-// --- Important Notes ---
-// 1. Persistence: The `lastKnownBundleIds` set is reset every time the bot restarts.
-//    For a production bot, you would need to save this state to a file or database
-//    (like SQLite, MongoDB, or Firebase Firestore) and load it on startup.
-// 2. Roblox API: The `ROBLOX_CATALOG_API_URL` has been updated to use
-//    `catalog.roblox.com/v1/search/items` with `sortType=3` and `sortOrder=Desc`
-//    to better target recently published bundles, similar to how the Roblox website
-//    itself sorts.
-// 3. Error Handling: The bot includes basic error handling for API requests and
-//    Discord messaging, but robust error handling and logging are crucial for
-//    long-running applications.
-// 4. Rate Limits: Be mindful of Roblox API rate limits. Making requests every minute
-//    might be too frequent and could lead to your bot being temporarily blocked
-//    by Roblox. Consider increasing `CHECK_INTERVAL_MS` if you encounter issues.
-// 5. Discord Permissions: Ensure your bot has the necessary permissions in your
-//    Discord server (at least "Send Messages" and "Read Message History" in the target channel).

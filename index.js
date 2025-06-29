@@ -1,5 +1,4 @@
 // Import necessary modules
-
 const { Client, GatewayIntentBits } = require('discord.js');
 const fetch = require('node-fetch'); // For making HTTP requests to Roblox API
 
@@ -9,8 +8,16 @@ const fetch = require('node-fetch'); // For making HTTP requests to Roblox API
 // environment variable settings (e.g., Replit Secrets, Railway Variables).
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
-const ROBLOX_CATALOG_API_URL = 'https://catalog.roblox.com/v1/bundles/list'; // Placeholder URL for recently created items
-const CHECK_INTERVAL_MS = 1 * 60 * 1000; //Check every minute
+
+// Updated Roblox Catalog API URL for recently published bundles
+// This URL uses the search/items endpoint with specific filters and sorting.
+// - category=Characters: Bundles are typically classified under Characters.
+// - subcategory=Bundles: Narrows down the search to bundles.
+// - sortType=3: This parameter generally indicates sorting by 'Updated' or 'Recently Created/Published'.
+// - sortOrder=Desc: Ensures the newest items appear first.
+// - limit=10: Fetches 10 items per request.
+const ROBLOX_CATALOG_API_URL = 'https://catalog.roblox.com/v1/search/items?category=Characters&subcategory=Bundles&sortType=3&sortOrder=Desc&limit=10';
+const CHECK_INTERVAL_MS = 1 * 60 * 1000; // Check every minute (1 minute = 60,000 milliseconds)
 
 // --- Global State ---
 // This will store the IDs of the bundles we've already seen to avoid re-notifying.
@@ -59,16 +66,15 @@ async function sendMessage(message) {
 async function checkForNewBundles() {
     console.log('Checking for new Roblox bundles...');
     try {
-       const response = await fetch('https://catalog.roblox.com/v1/bundles/list', {
-    method: 'POST',
-    headers: {
-        'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-        sortOrder: 'Desc',
-        limit: 20
-    })
-});
+        // Use the updated URL for GET request
+        const response = await fetch(ROBLOX_CATALOG_API_URL, {
+            method: 'GET', // Changed to GET method
+            headers: {
+                'Accept': 'application/json' // Indicate preference for JSON response
+            }
+            // No 'body' is needed for GET requests
+        });
+
         if (!response.ok) {
             throw new Error(`HTTP error! Status: ${response.status}`);
         }
@@ -86,9 +92,7 @@ async function checkForNewBundles() {
 
         const newBundles = [];
         currentBundles.forEach(bundle => {
-            // A "bundle" here is an item from the API. You might need to refine
-            // this logic based on actual Roblox API responses to specifically
-            // identify "bundles" vs. other catalog items.
+            // Check if the bundle ID is new
             if (!lastKnownBundleIds.has(bundle.id)) {
                 newBundles.push(bundle);
                 lastKnownBundleIds.add(bundle.id); // Add to our known list
@@ -98,11 +102,15 @@ async function checkForNewBundles() {
         if (newBundles.length > 0) {
             console.log(`Found ${newBundles.length} new bundle(s)!`);
             for (const bundle of newBundles) {
+                // Constructing a generic catalog link. Note: Roblox URLs for bundles sometimes differ slightly
+                // but `/bundles/{id}/-` is a common pattern that redirects to the correct page.
+                const bundleLink = `https://www.roblox.com/bundles/${bundle.id}/-`;
+
                 const message = `🎉 New Roblox Bundle Released! 🎉\n` +
                                 `**Name:** ${bundle.name || 'N/A'}\n` +
                                 `**Description:** ${bundle.description || 'No description provided.'}\n` +
                                 `**Price:** ${bundle.price || 'Free'}\n` +
-                                `**Link:** https://www.roblox.com/bundles/${bundle.id}/-`; // Constructing a generic catalog link
+                                `**Link:** ${bundleLink}`;
                 await sendMessage(message);
             }
         } else {
@@ -117,12 +125,11 @@ async function checkForNewBundles() {
 
 // --- Discord Bot Event Handling ---
 
-
 client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
     console.log(`Bot ID: ${client.user.id}`);
 
-   
+    // Perform an initial check immediately upon bot startup
     await checkForNewBundles();
 
     // Set up the interval to check for new bundles regularly
@@ -141,14 +148,15 @@ if (DISCORD_BOT_TOKEN) {
 // 1. Persistence: The `lastKnownBundleIds` set is reset every time the bot restarts.
 //    For a production bot, you would need to save this state to a file or database
 //    (like SQLite, MongoDB, or Firebase Firestore) and load it on startup.
-// 2. Roblox API: The `ROBLOX_CATALOG_API_URL` is a generic example. You will likely
-//    need to find a more specific Roblox API endpoint or method that reliably
-//    identifies *new bundles* as they are released. Web scraping is generally
-//    not recommended as it can break easily and might violate terms of service.
+// 2. Roblox API: The `ROBLOX_CATALOG_API_URL` has been updated to use
+//    `catalog.roblox.com/v1/search/items` with `sortType=3` and `sortOrder=Desc`
+//    to better target recently published bundles, similar to how the Roblox website
+//    itself sorts.
 // 3. Error Handling: The bot includes basic error handling for API requests and
 //    Discord messaging, but robust error handling and logging are crucial for
 //    long-running applications.
-// 4. Rate Limits: Be mindful of Roblox API rate limits. Sending too many requests
-//    in a short period might lead to your bot being temporarily blocked.
+// 4. Rate Limits: Be mindful of Roblox API rate limits. Making requests every minute
+//    might be too frequent and could lead to your bot being temporarily blocked
+//    by Roblox. Consider increasing `CHECK_INTERVAL_MS` if you encounter issues.
 // 5. Discord Permissions: Ensure your bot has the necessary permissions in your
 //    Discord server (at least "Send Messages" and "Read Message History" in the target channel).

@@ -1,0 +1,25 @@
+{
+  "name": "roblox-bundle-notifier",
+  "version": "1.0.0",
+  "description": "skibid",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "roblox",
+    "notifier",
+    "bundles"
+  ],
+  "author": "azureepic",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.0.0",
+    "node-fetch": "^2.6.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

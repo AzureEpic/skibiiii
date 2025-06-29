@@ -106,7 +106,7 @@ async function checkForNewBundles() {
                 // but `/bundles/{id}/-` is a common pattern that redirects to the correct page.
                 const bundleLink = `https://www.roblox.com/bundles/${bundle.id}/-`;
 
-                const message = `🎉 New Roblox Bundle Released! 🎉\n` +
+                const message = `New Bundle Released\n` +
                                 `**Name:** ${bundle.name || 'N/A'}\n` +
                                 `**Description:** ${bundle.description || 'No description provided.'}\n` +
                                 `**Price:** ${bundle.price || 'Free'}\n` +
